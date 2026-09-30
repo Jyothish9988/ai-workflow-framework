@@ -118,4 +118,28 @@ export const integrationAPI = {
   testDraft: (data) => api.post('/integrations/test', data),
 };
 
+
+// ---------- node packages visible to every user (admin-uploaded .exe / .dll nodes) ----------
+export const packageAPI = { list: () => api.get('/packages') };
+
+// ---------- admin (backend enforces is_admin on every /admin route) ----------
+const multipart = { headers: { 'Content-Type': 'multipart/form-data' } };
+export const adminAPI = {
+  me: () => api.get('/me'),
+  stats: () => api.get('/admin/stats'),
+  users: (params) => api.get('/admin/users', { params }),
+  createUser: (data) => api.post('/admin/users', data),
+  updateUser: (id, data) => api.patch(`/admin/users/${id}`, data),
+  deleteUser: (id) => api.delete(`/admin/users/${id}`),
+  runs: (params) => api.get('/admin/runs', { params }),
+  runNodes: (id, includeData = false) => api.get(`/admin/runs/${id}/nodes`, { params: { include_data: includeData } }),
+  terminateRun: (id) => api.post(`/admin/runs/${id}/terminate`),
+  packages: () => api.get('/admin/packages'),
+  packageRuntime: () => api.get('/admin/packages/runtime'),
+  createPackage: (form) => api.post('/admin/packages', form, multipart),   // form: FormData(name, description, file, icon?)
+  updatePackage: (id, form) => api.put(`/admin/packages/${id}`, form, multipart),
+  deletePackage: (id) => api.delete(`/admin/packages/${id}`),
+};
+
+
 export default api;

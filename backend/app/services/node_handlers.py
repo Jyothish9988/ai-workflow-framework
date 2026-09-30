@@ -39,16 +39,73 @@ async def text(data, ctx, sn):
 
 
 async def json_node(data, ctx, sn):
-    op, var = data.get("operation", "parse"), data.get("outputVar") or "json.result"
-    val = _get(ctx, data.get("source", ""))
+    op = data.get("operation", "parse")
+    var = data.get("outputVar") or "json.result"
+    source = data.get("source", "")
+
+    val = _get(ctx, source)
+
+    # Debug / validation
+    if val is None:
+        raise ValueError(
+            f"JSON node source '{source}' returned None. "
+            f"Check whether the source variable exists in workflow context."
+        )
+
     if op == "parse":
-        res = json.loads(val) if isinstance(val, str) else val
+        if isinstance(val, str):
+            val = val.strip()
+
+            if not val:
+                raise ValueError(
+                    f"JSON node source '{source}' is empty."
+                )
+
+            try:
+                res = json.loads(val)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"Invalid JSON in source '{source}': {e}"
+                ) from e
+        else:
+            # Already parsed JSON
+            res = val
+
     elif op == "stringify":
         res = json.dumps(val, default=str)
-    else:  # extract path relative to source
+
+    elif op == "extract":
         res = val
-        for p in filter(None, re.split(r"[.\[\]]", str(data.get("path", "")))):
-            res = res[int(p)] if isinstance(res, list) and p.isdigit() else (res.get(p) if isinstance(res, dict) else None)
+
+        for p in filter(
+            None,
+            re.split(r"[.\[\]]", str(data.get("path", "")))
+        ):
+            if isinstance(res, list) and p.isdigit():
+                index = int(p)
+
+                if index >= len(res):
+                    raise ValueError(
+                        f"JSON path index {index} is out of range."
+                    )
+
+                res = res[index]
+
+            elif isinstance(res, dict):
+                if p not in res:
+                    raise ValueError(
+                        f"JSON path '{p}' was not found."
+                    )
+
+                res = res[p]
+
+            else:
+                res = None
+                break
+
+    else:
+        raise ValueError(f"Unsupported JSON operation: {op}")
+
     return sn(ctx, var, res), f"JSON {op} -> {var}", None
 
 

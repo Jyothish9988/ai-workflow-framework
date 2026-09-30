@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import ProtectedRoute from './components/ProtectedRoute';
+import AdminRoute from './components/AdminRoute';
 import Home from './pages/Home';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
@@ -13,6 +14,7 @@ import Scheduler from './pages/Scheduler';
 import Settings from './pages/Settings';
 import LLMSettings from './pages/settings/LLMSettings';
 import AppIntegration from './pages/settings/AppIntegration';
+import AdminPage from './pages/admin/AdminPage';
 
 /**
  * Root application component
@@ -60,6 +62,9 @@ function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/settings/llm" element={<LLMSettings />} />
           <Route path="/settings/app-integration" element={<AppIntegration />} />
+
+          {/* Admin - the page is also guarded by the backend (is_admin) */}
+          <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
         </Route>
 
         {/* Catch-all - redirect to home */}

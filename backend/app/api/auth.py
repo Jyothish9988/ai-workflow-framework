@@ -32,11 +32,17 @@ async def register(user: UserRegister, db: AsyncSession = Depends(get_db)):
 
     return {"message": "User Created", "username": user.username, "email": user.email, "user_id": new_user_add.id}
 
-
 @auth_router.post("/login")
-async def login(request: Request, user: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(
+    request: Request,
+    user: UserLogin,
+    db: AsyncSession = Depends(get_db)
+):
     ip_address = str(request.client.host)
-    result = await db.execute(select(User).where(User.email == user.email))
+
+    result = await db.execute(
+        select(User).where(User.email == user.email)
+    )
     db_user = result.scalar_one_or_none()
 
     if not db_user:
@@ -45,15 +51,32 @@ async def login(request: Request, user: UserLogin, db: AsyncSession = Depends(ge
     if not verify_password(user.password, db_user.password):
         return {"error": "Invalid credentials"}
 
-    access_token = create_access_token({"sub": db_user.email})
+    access_token = create_access_token({
+        "sub": db_user.email
+    })
 
-    session_add = UserSession(user_id=db_user.id, access_token=access_token, ip_address=ip_address)
+    session_add = UserSession(
+        user_id=db_user.id,
+        access_token=access_token,
+        ip_address=ip_address
+    )
+
     db.add(session_add)
     await db.commit()
     await db.refresh(session_add)
 
-    return {"access_token": access_token, "token_type": "bearer"}
+    print("Login role:", db_user.role)
 
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": str(db_user.id),
+            "username": db_user.username,
+            "email": db_user.email,
+            "role": db_user.role,
+        }
+    }
 
 @auth_router.post("/logout")
 async def logout(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):

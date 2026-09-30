@@ -12,7 +12,7 @@ from app.models.workflow import Workflow
 from app.models.workflow_execution import *
 from app.api import llm_connections
 from app.api.app_integrations import router as app_integrations_router
-
+from app.api.admin import router as admin_router
 
 app = FastAPI()
 
@@ -65,3 +65,4 @@ app.include_router(auth_router)
 app.include_router(workflow_router)
 app.include_router(llm_connections.router)
 app.include_router(app_integrations_router)
+app.include_router(admin_router)

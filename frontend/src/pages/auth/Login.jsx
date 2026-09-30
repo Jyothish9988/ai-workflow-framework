@@ -13,6 +13,7 @@ export default function Login() {
     e.preventDefault();
     if (!f.email || !f.password) return setError('Please fill in all fields');
     setLoading(true); setError('');
+    /*
     try {
       const { data } = await authAPI.login(f.email.trim(), f.password);
       if (!data.access_token) throw new Error('No access token returned');
@@ -20,6 +21,32 @@ export default function Login() {
       setAuthToken(data.access_token);
       navigate('/dashboard');
     } catch (err) { setError(errMsg(err, 'Login failed')); } finally { setLoading(false); }
+    */
+    try {
+    const { data } = await authAPI.login(f.email.trim(), f.password);
+
+    if (!data.access_token) {
+      throw new Error('No access token returned');
+    }
+
+    setAuthToken(data.access_token);
+
+    localStorage.setItem(
+      'user',
+      JSON.stringify(data.user)
+    );
+
+    if (data.user?.role === 'admin') {
+      navigate('/admin');
+    } else {
+      navigate('/dashboard');
+    }
+  } catch (err) {
+    setError(errMsg(err, 'Login failed'));
+  } finally {
+    setLoading(false);
+  }
+
   };
 
   return (

@@ -24,6 +24,12 @@ class User(Base):
     username: Mapped[str] = mapped_column(String, nullable=False)
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     password: Mapped[str] = mapped_column(String, nullable=False)
+    
+    role: Mapped[str] = mapped_column(
+        String(20),
+        default="user",
+        nullable=False
+    )
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
