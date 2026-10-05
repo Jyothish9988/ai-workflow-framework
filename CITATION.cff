@@ -1,1 +1,38 @@
+cff-version: 1.2.0
+title: "AI Workflow Framework"
+message: "If you use this software, please cite it using the information below."
+type: software
 
+authors:
+  - family-names: "SL"
+    given-names: "Jyothish"
+
+repository-code: "https://github.com/Jyothish9988/ai-workflow-saas"
+
+license: "Apache-2.0"
+
+abstract: >
+  AI Workflow Framework (AWF) is a self-hosted framework for building,
+  executing, scheduling, and monitoring visual AI workflows. It combines
+  a React-based visual workflow editor with a FastAPI execution engine,
+  PostgreSQL persistence, configurable large language model providers,
+  local Ollama inference, workflow scheduling, execution history,
+  and application integrations.
+
+keywords:
+  - artificial intelligence
+  - AI workflows
+  - LLM
+  - large language models
+  - AI agents
+  - workflow automation
+  - workflow orchestration
+  - RAG
+  - FastAPI
+  - React
+  - PostgreSQL
+  - Ollama
+  - automation
+
+version: "0.1.0"
+date-released: "2026-10-05"
