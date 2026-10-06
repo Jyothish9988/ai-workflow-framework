@@ -7,13 +7,13 @@ import {
 import '@xyflow/react/dist/style.css';
 import dagre from '@dagrejs/dagre';
 import { Save, Play, Square, ArrowLeft, Plus, LayoutGrid, History, Loader2, Settings2 } from 'lucide-react';
-import { workflowAPI, executionAPI, llmAPI, schedulerAPI, errMsg } from '../../utils/api';
+import { packageAPI, workflowAPI, executionAPI, llmAPI, schedulerAPI, errMsg } from '../../utils/api';
 import { Spinner, useToast, pick } from '../../components/ui';
 import BaseNode, { RunContext } from './BaseNode';
 import Inspector from './Inspector';
 import NodePicker from './NodePicker';
 import ExecutionPanel, { nodeLogInfo } from './ExecutionPanel';
-import { NODES, getDef, defaultData } from './nodeRegistry';
+import { NODES, getDef, defaultData, registerPackages, registerMissingPackages } from './nodeRegistry';
 
 const nodeTypes = Object.fromEntries(Object.keys(NODES).map((k) => [k, BaseNode]));
 const FIRST_START = () => ({ id: 'start_1', type: 'start', position: { x: 80, y: 160 }, data: defaultData('start') });
@@ -58,8 +58,14 @@ function Editor() {
   useEffect(() => {
     (async () => {
       try {
+        const pk = await packageAPI.list().then((r) => r.data || []).catch(() => []);
+        registerPackages(pk);
+        pk.forEach((p) => { nodeTypes[p.node_type] = BaseNode; });
         const { data: wf } = await workflowAPI.getById(id);
         setWorkflow(wf);
+        const wTypes = (wf.workflow_json?.nodes || []).map((n) => n.type);
+        registerMissingPackages(wTypes);
+        wTypes.forEach((t) => { if (t?.startsWith('pkg_')) nodeTypes[t] = BaseNode; });
         setNodes((wf.workflow_json?.nodes || []).map((n) => ({ ...n, type: NODES[ALIAS[n.type] || n.type] ? (ALIAS[n.type] || n.type) : 'noop', data: n.data || {} })));
         setEdges((wf.workflow_json?.edges || []).map((e) => ({ ...edgeDefaults, ...e })));
       } catch (e) { notify(errMsg(e, 'Failed to load workflow'), 'error'); }
@@ -78,12 +84,13 @@ function Editor() {
     const nn = { id: uid(), type, position: pos, data: defaultData(type), selected: true };
     setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), nn]);
     markDirty();
+    return true;                       // lets callers know the node was really added
   }, [rf, setNodes, nodes, notify]);
 
   const onDrop = (e) => {
     e.preventDefault();
     const type = e.dataTransfer.getData('application/wf-node');
-    if (type) addNode(type, rf.screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+    if (type && addNode(type, rf.screenToFlowPosition({ x: e.clientX, y: e.clientY }))) setPickerOpen(false);
   };
 
   const updateNode = useCallback((nid, field, value) => {
@@ -252,7 +259,7 @@ function Editor() {
         <button className="wf-add" onClick={() => setPickerOpen(true)} title="Add node"><Plus size={20} /></button>
       </div>
 
-      {pickerOpen && <NodePicker onClose={() => setPickerOpen(false)} onPick={(t) => { addNode(t); }} />}
+      {pickerOpen && <NodePicker onClose={() => setPickerOpen(false)} onPick={(t) => { if (addNode(t)) setPickerOpen(false); }} />}
       {selected && !pickerOpen && (
         <Inspector key={selected.id} node={selected} connections={connections} output={runStatus[selected.id]?.output}
           onChange={updateNode} onDelete={deleteNode} onDuplicate={duplicateNode}

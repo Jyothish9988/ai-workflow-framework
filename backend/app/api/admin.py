@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user, hash_password
 from app.database.deps import get_db
-from app.models.package import Package
+from app.models.package import Package, PackageUser
 from app.models.session import Session as UserSession
 from app.models.user import User
 from app.models.workflow import Workflow
@@ -25,12 +25,7 @@ from app.models.workflow_execution import (
 
 # Temporarily disabled because these modules are not available
 # from app.services.engine.cancel import cancel_execution
-# from app.services.package_runner import (
-#     ALLOWED_EXT,
-#     MAX_PACKAGE_BYTES,
-#     PKG_DIR,
-#     SERVER_PLATFORM,
-# )
+from app.services.package_nodes import package_allowed, validate_manifest
 
 
 MAX_ICON_BYTES = 200 * 1024
@@ -93,41 +88,24 @@ async def me(user: User = Depends(get_current_user)):
     }
 
 
-def _pkg_out(p: Package, admin: bool = False) -> dict:
+def _pkg_out(p: Package, admin: bool = False, user_ids=None) -> dict:
+    m = p.manifest or {}
     out = {
-        "id": str(p.id),
-        "node_type": f"pkg_{p.id.hex}",
-        "name": p.name,
-        "description": p.description,
-        "kind": p.kind,
-        "icon": p.icon,
+        "id": str(p.id), "node_type": f"pkg_{p.id.hex}", "name": p.name, "description": p.description,
+        "icon": p.icon, "color": m.get("color"), "fields": m.get("fields", []), "output": m.get("output"),
+        "operations": list((m.get("operations") or {}).keys()), "auth": m.get("auth"),
     }
-
     if admin:
-        out |= {
-            "platform": p.platform,
-            "size": p.size,
-            "sha256": p.sha256,
-            "original_name": p.original_name,
-            "is_active": p.is_active,
-            "created_at": _iso(p.created_at),
-        }
-
+        out |= {"manifest": m, "access": p.access, "is_active": p.is_active,
+                "user_ids": user_ids or [], "created_at": _iso(p.created_at)}
     return out
 
 
 @public_router.get("/packages")
-async def list_active_packages(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    rows = await db.scalars(
-        select(Package)
-        .where(Package.is_active.is_(True))
-        .order_by(Package.name)
-    )
-
-    return [_pkg_out(p) for p in rows]
+async def list_active_packages(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Packages this user may use: enabled AND (open to all OR assigned to them)."""
+    rows = await db.scalars(select(Package).where(Package.is_active.is_(True)).order_by(Package.name))
+    return [_pkg_out(p) for p in rows if await package_allowed(db, p, str(user.id))]
 
 
 # ═══════════════════════════ Stats ═══════════════════════════
@@ -811,336 +789,72 @@ async def run_nodes(
 #     }
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# PACKAGE MANAGEMENT - TEMPORARILY DISABLED
-#
-# These endpoints require:
-#
-# app.services.package_runner
-#
-# which is currently unavailable.
-#
-# Package listing for active packages remains available above through
-# /packages.
-#
-# The admin package upload/update/delete/runtime functionality is
-# commented out until package_runner is implemented.
-# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════ Node packages (declarative) ═══════════════════════════
+
+class PackageIn(BaseModel):
+    manifest: Optional[dict] = None
+    access: Optional[str] = None          # all | assigned
+    user_ids: Optional[list[str]] = None
+    is_active: Optional[bool] = None
 
 
-# async def _save_package_file(file: UploadFile) -> dict:
-#     ext = Path(file.filename or "").suffix.lower()
-#
-#     if ext not in ALLOWED_EXT:
-#         raise HTTPException(
-#             400,
-#             f"Unsupported file type. Allowed: "
-#             f"{', '.join(sorted(ALLOWED_EXT))}",
-#         )
-#
-#     PKG_DIR.mkdir(
-#         parents=True,
-#         exist_ok=True,
-#     )
-#
-#     stored = f"{uuid.uuid4().hex}{ext}"
-#
-#     dest = PKG_DIR / stored
-#     h = hashlib.sha256()
-#     size = 0
-#     head = b""
-#
-#     try:
-#         with open(dest, "wb") as out:
-#             while chunk := await file.read(1 << 20):
-#                 head = head or chunk[:4]
-#                 size += len(chunk)
-#
-#                 if size > MAX_PACKAGE_BYTES:
-#                     raise HTTPException(
-#                         413,
-#                         f"File is larger than "
-#                         f"{MAX_PACKAGE_BYTES // (1024 * 1024)} MB",
-#                     )
-#
-#                 h.update(chunk)
-#                 out.write(chunk)
-#
-#         platform = (
-#             "windows"
-#             if head[:2] == b"MZ"
-#             else "linux"
-#             if head == b"\x7fELF"
-#             else None
-#         )
-#
-#         if platform is None:
-#             raise HTTPException(
-#                 400,
-#                 "Not a valid Windows (PE) or Linux (ELF) binary",
-#             )
-#
-#         if platform != SERVER_PLATFORM:
-#             raise HTTPException(
-#                 400,
-#                 f"This is a {platform} binary but the server runs "
-#                 f"{SERVER_PLATFORM}. Upload a {SERVER_PLATFORM} build, "
-#                 f"or run the backend on {platform}.",
-#             )
-#
-#     except BaseException:
-#         dest.unlink(
-#             missing_ok=True
-#         )
-#         raise
-#
-#     if SERVER_PLATFORM == "linux":
-#         dest.chmod(0o700)
-#
-#     return {
-#         "kind": ALLOWED_EXT[ext],
-#         "platform": platform,
-#         "original_name": Path(file.filename).name[:255],
-#         "stored_name": stored,
-#         "sha256": h.hexdigest(),
-#         "size": size,
-#     }
+async def _user_ids(db, pid) -> list[str]:
+    return [str(x) for x in await db.scalars(select(PackageUser.user_id).where(PackageUser.package_id == pid))]
 
 
-# async def _read_icon(
-#     icon: Optional[UploadFile],
-# ) -> Optional[str]:
-#
-#     if icon is None or not icon.filename:
-#         return None
-#
-#     raw = await icon.read(
-#         MAX_ICON_BYTES + 1
-#     )
-#
-#     if len(raw) > MAX_ICON_BYTES:
-#         raise HTTPException(
-#             400,
-#             "Icon must be 200 KB or smaller",
-#         )
-#
-#     mime = (
-#         "image/png"
-#         if raw.startswith(
-#             b"\x89PNG\r\n\x1a\n"
-#         )
-#         else "image/jpeg"
-#         if raw.startswith(
-#             b"\xff\xd8\xff"
-#         )
-#         else "image/webp"
-#         if raw[:4] == b"RIFF"
-#         and raw[8:12] == b"WEBP"
-#         else None
-#     )
-#
-#     if not mime:
-#         raise HTTPException(
-#             400,
-#             "Icon must be a PNG, JPEG or WebP image",
-#         )
-#
-#     return (
-#         f"data:{mime};base64,"
-#         f"{base64.b64encode(raw).decode()}"
-#     )
+async def _apply(db, p: Package, body: PackageIn):
+    if body.manifest is not None:
+        try:
+            m = validate_manifest(body.manifest)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        p.manifest, p.name = m, m["name"].strip()
+        p.description, p.icon = str(m.get("description", ""))[:1000], m.get("icon")
+    if body.access is not None:
+        if body.access not in ("all", "assigned"):
+            raise HTTPException(400, "access must be 'all' or 'assigned'")
+        p.access = body.access
+    if body.is_active is not None:
+        p.is_active = body.is_active
+    try:
+        await db.flush()
+    except IntegrityError:
+        raise HTTPException(409, "A package with that name already exists")
+    if body.user_ids is not None:
+        await db.execute(delete(PackageUser).where(PackageUser.package_id == p.id))
+        db.add_all([PackageUser(package_id=p.id, user_id=u) for u in set(body.user_ids)])
+        await db.flush()
 
 
-# def _clean_name(name: str) -> str:
-#     name = (name or "").strip()
-#
-#     if not 2 <= len(name) <= 60:
-#         raise HTTPException(
-#             400,
-#             "Name must be 2-60 characters",
-#         )
-#
-#     return name
+@router.get("/packages")
+async def admin_list_packages(db: AsyncSession = Depends(get_db)):
+    rows = await db.scalars(select(Package).order_by(Package.created_at.desc()))
+    return [_pkg_out(p, True, await _user_ids(db, p.id)) for p in rows]
 
 
-# @router.get("/packages/runtime")
-# async def package_runtime():
-#     return {
-#         "platform": SERVER_PLATFORM,
-#         "extensions": sorted(ALLOWED_EXT),
-#         "max_mb": MAX_PACKAGE_BYTES // (1024 * 1024),
-#     }
+@router.post("/packages", status_code=201)
+async def create_package(body: PackageIn, db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
+    if body.manifest is None:
+        raise HTTPException(400, "manifest is required")
+    p = Package(name="_", manifest={}, created_by=str(admin.id), access="all", is_active=True)
+    db.add(p)
+    await _apply(db, p, body)
+    return _pkg_out(p, True, await _user_ids(db, p.id))
 
 
-# @router.get("/packages")
-# async def admin_list_packages(
-#     db: AsyncSession = Depends(get_db),
-# ):
-#     return [
-#         _pkg_out(
-#             p,
-#             admin=True,
-#         )
-#         for p in await db.scalars(
-#             select(Package)
-#             .order_by(
-#                 Package.created_at.desc()
-#             )
-#         )
-#     ]
+@router.put("/packages/{package_id}")
+async def update_package(package_id: str, body: PackageIn, db: AsyncSession = Depends(get_db)):
+    p = await db.get(Package, _uuid(package_id, "package id"))
+    if not p:
+        raise HTTPException(404, "Package not found")
+    await _apply(db, p, body)
+    return _pkg_out(p, True, await _user_ids(db, p.id))
 
 
-# @router.post(
-#     "/packages",
-#     status_code=201,
-# )
-# async def create_package(
-#     name: str = Form(...),
-#     description: str = Form(""),
-#     file: UploadFile = File(...),
-#     icon: Optional[UploadFile] = File(None),
-#     db: AsyncSession = Depends(get_db),
-#     admin: User = Depends(require_admin),
-# ):
-#
-#     name = _clean_name(name)
-#     icon_url = await _read_icon(icon)
-#     meta = await _save_package_file(file)
-#
-#     p = Package(
-#         name=name,
-#         description=description.strip()[:1000],
-#         icon=icon_url,
-#         created_by=str(admin.id),
-#         **meta,
-#     )
-#
-#     db.add(p)
-#
-#     try:
-#         await db.flush()
-#     except IntegrityError:
-#         (
-#             PKG_DIR / meta["stored_name"]
-#         ).unlink(
-#             missing_ok=True
-#         )
-#
-#         raise HTTPException(
-#             409,
-#             "A package with that name already exists",
-#         )
-#
-#     return _pkg_out(
-#         p,
-#         admin=True,
-#     )
-
-
-# @router.put(
-#     "/packages/{package_id}"
-# )
-# async def update_package(
-#     package_id: str,
-#     name: Optional[str] = Form(None),
-#     description: Optional[str] = Form(None),
-#     is_active: Optional[bool] = Form(None),
-#     file: Optional[UploadFile] = File(None),
-#     icon: Optional[UploadFile] = File(None),
-#     db: AsyncSession = Depends(get_db),
-# ):
-#
-#     p = await db.get(
-#         Package,
-#         _uuid(
-#             package_id,
-#             "package id",
-#         ),
-#     )
-#
-#     if not p:
-#         raise HTTPException(
-#             404,
-#             "Package not found",
-#         )
-#
-#     icon_url = await _read_icon(icon)
-#     old_file = None
-#
-#     if file is not None and file.filename:
-#         meta = await _save_package_file(file)
-#         old_file = p.stored_name
-#
-#         for k, v in meta.items():
-#             setattr(
-#                 p,
-#                 k,
-#                 v,
-#             )
-#
-#     if name is not None:
-#         p.name = _clean_name(name)
-#
-#     if description is not None:
-#         p.description = description.strip()[:1000]
-#
-#     if is_active is not None:
-#         p.is_active = is_active
-#
-#     if icon_url:
-#         p.icon = icon_url
-#
-#     try:
-#         await db.flush()
-#     except IntegrityError:
-#         raise HTTPException(
-#             409,
-#             "A package with that name already exists",
-#         )
-#
-#     if old_file:
-#         (
-#             PKG_DIR / old_file
-#         ).unlink(
-#             missing_ok=True
-#         )
-#
-#     return _pkg_out(
-#         p,
-#         admin=True,
-#     )
-
-
-# @router.delete(
-#     "/packages/{package_id}",
-#     status_code=204,
-# )
-# async def delete_package(
-#     package_id: str,
-#     db: AsyncSession = Depends(get_db),
-# ):
-#
-#     p = await db.get(
-#         Package,
-#         _uuid(
-#             package_id,
-#             "package id",
-#         ),
-#     )
-#
-#     if not p:
-#         raise HTTPException(
-#             404,
-#             "Package not found",
-#         )
-#
-#     stored = p.stored_name
-#
-#     await db.delete(p)
-#     await db.flush()
-#
-#     (
-#         PKG_DIR / stored
-#     ).unlink(
-#         missing_ok=True
-#     )
+@router.delete("/packages/{package_id}", status_code=204)
+async def delete_package(package_id: str, db: AsyncSession = Depends(get_db)):
+    p = await db.get(Package, _uuid(package_id, "package id"))
+    if not p:
+        raise HTTPException(404, "Package not found")
+    await db.execute(delete(PackageUser).where(PackageUser.package_id == p.id))
+    await db.delete(p)

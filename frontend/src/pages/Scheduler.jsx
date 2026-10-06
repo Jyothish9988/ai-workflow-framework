@@ -1,9 +1,33 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Clock, X } from 'lucide-react';
-import { schedulerAPI, workflowAPI, errMsg } from '../utils/api';
-import { PageHeader, Spinner, Empty, useToast, timeAgo, pick } from '../components/ui';
+import {
+  Plus,
+  Trash2,
+  Clock,
+  X,
+  Pencil,
+  Play,
+} from 'lucide-react';
 
-// ── Repeat options shown in the dropdown ─────────────────────────────────────
+import {
+  schedulerAPI,
+  workflowAPI,
+  errMsg,
+} from '../utils/api';
+
+import {
+  PageHeader,
+  Spinner,
+  Empty,
+  useToast,
+  timeAgo,
+  pick,
+} from '../components/ui';
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Repeat options
+// ─────────────────────────────────────────────────────────────────────────────
+
 const MODES = [
   ['once', 'Once (pick date & time)'],
   ['minutes', 'Every N minutes'],
@@ -13,316 +37,1298 @@ const MODES = [
   ['monthly', 'Every month'],
 ];
 
-const WEEKDAYS = [['1', 'Mon'], ['2', 'Tue'], ['3', 'Wed'], ['4', 'Thu'], ['5', 'Fri'], ['6', 'Sat'], ['0', 'Sun']];
+const WEEKDAYS = [
+  ['1', 'Mon'],
+  ['2', 'Tue'],
+  ['3', 'Wed'],
+  ['4', 'Thu'],
+  ['5', 'Fri'],
+  ['6', 'Sat'],
+  ['0', 'Sun'],
+];
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 const pad = (n) => String(n).padStart(2, '0');
+
 const todayStr = () => {
   const d = new Date();
+
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
-const browserTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+const browserTz = () =>
+  Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// New form
+// ─────────────────────────────────────────────────────────────────────────────
 
 const newForm = () => ({
   workflow: '',
   mode: 'daily',
-  date: todayStr(),     // yyyy-mm-dd
-  time: '09:00',        // HH:mm (24h)
-  everyN: 15,           // used by "Every N minutes"
-  weekdays: ['1'],      // used by "Every week" (0 = Sunday)
+  date: todayStr(),
+  time: '09:00',
+  everyN: 15,
+  weekdays: ['1'],
   timezone: browserTz(),
   enabled: true,
 });
 
-// Accept either a bare array or an object wrapping the array under a known key
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Response helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 const asList = (d, ...keys) => {
   if (Array.isArray(d)) return d;
-  for (const k of keys) if (Array.isArray(d?.[k])) return d[k];
+
+  for (const k of keys) {
+    if (Array.isArray(d?.[k])) {
+      return d[k];
+    }
+  }
+
   return [];
 };
 
-// Workflows may expose their display name under different fields
-const wfLabel = (w) => w.name || w.title || w.workflow_name || String(w.id);
 
-// ── Picker values -> cron  (minute hour day-of-month month day-of-week) ─────
+const wfLabel = (w) =>
+  w.name ||
+  w.title ||
+  w.workflow_name ||
+  String(w.id);
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cron generation
+// minute hour day-of-month month day-of-week
+// ─────────────────────────────────────────────────────────────────────────────
+
 const toCron = (f) => {
-  const [hh, mm] = (f.time || '09:00').split(':').map(Number);
-  const [, mo, d] = (f.date || '').split('-').map(Number);
-  const days = [...f.weekdays].sort((a, b) => a - b).join(',');
+  const [hh, mm] = (f.time || '09:00')
+    .split(':')
+    .map(Number);
+
+  const [, mo, d] = (f.date || '')
+    .split('-')
+    .map(Number);
+
+  const days = [...(f.weekdays || [])]
+    .sort((a, b) => Number(a) - Number(b))
+    .join(',');
+
   switch (f.mode) {
-    case 'minutes': return `*/${Math.min(59, Math.max(1, Number(f.everyN) || 1))} * * * *`;
-    case 'hourly':  return `${mm} * * * *`;
-    case 'daily':   return `${mm} ${hh} * * *`;
-    case 'weekly':  return `${mm} ${hh} * * ${days}`;
-    case 'monthly': return `${mm} ${hh} ${d} * *`;
-    case 'once':    return `${mm} ${hh} ${d} ${mo} *`;
-    default:        return '';
+    case 'minutes':
+      return `*/${Math.min(
+        59,
+        Math.max(1, Number(f.everyN) || 1)
+      )} * * * *`;
+
+    case 'hourly':
+      return `${mm} * * * *`;
+
+    case 'daily':
+      return `${mm} ${hh} * * *`;
+
+    case 'weekly':
+      return `${mm} ${hh} * * ${days}`;
+
+    case 'monthly':
+      return `${mm} ${hh} ${d} * *`;
+
+    case 'once':
+      return `${mm} ${hh} ${d} ${mo} *`;
+
+    default:
+      return '';
   }
 };
 
-// Human-readable summary shown under the picker
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Human readable description
+// ─────────────────────────────────────────────────────────────────────────────
+
 const describe = (f) => {
   const t = f.time;
+
   switch (f.mode) {
-    case 'minutes': return `Runs every ${Number(f.everyN) || 1} minute(s)`;
-    case 'hourly':  return `Runs every hour at minute :${(t || '00:00').split(':')[1]}`;
-    case 'daily':   return `Runs every day at ${t}`;
+    case 'minutes':
+      return `Runs every ${Number(f.everyN) || 1} minute(s)`;
+
+    case 'hourly':
+      return `Runs every hour at minute :${(t || '00:00').split(':')[1]}`;
+
+    case 'daily':
+      return `Runs every day at ${t}`;
+
     case 'weekly': {
-      const names = WEEKDAYS.filter(([v]) => f.weekdays.includes(v)).map(([, n]) => n).join(', ');
+      const names = WEEKDAYS
+        .filter(([v]) => (f.weekdays || []).includes(v))
+        .map(([, n]) => n)
+        .join(', ');
+
       return `Runs every ${names || '—'} at ${t}`;
     }
-    case 'monthly': return `Runs on day ${Number((f.date || '').split('-')[2])} of every month at ${t}`;
-    case 'once':    return `Runs on ${f.date} at ${t}`;
-    default:        return '';
+
+    case 'monthly':
+      return `Runs on day ${
+        Number((f.date || '').split('-')[2]) || 1
+      } of every month at ${t}`;
+
+    case 'once':
+      return `Runs on ${f.date} at ${t}`;
+
+    default:
+      return '';
   }
 };
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parse existing cron into form values
+// ─────────────────────────────────────────────────────────────────────────────
+
+const cronToForm = (schedule) => {
+  const cron =
+    pick(schedule, ['cron_expression', 'cron']) || '';
+
+  const result = {
+    workflow: String(schedule.workflow_id || ''),
+    mode: 'daily',
+    date: todayStr(),
+    time: '09:00',
+    everyN: 15,
+    weekdays: ['1'],
+    timezone: schedule.timezone || browserTz(),
+    enabled:
+      pick(schedule, ['enabled', 'is_active']) !== false,
+  };
+
+  const parts = cron.trim().split(/\s+/);
+
+  if (parts.length !== 5) {
+    return result;
+  }
+
+  const [minute, hour, day, month, weekday] = parts;
+
+  // Every N minutes
+  if (
+    minute.startsWith('*/') &&
+    hour === '*' &&
+    day === '*' &&
+    month === '*' &&
+    weekday === '*'
+  ) {
+    return {
+      ...result,
+      mode: 'minutes',
+      everyN: Number(minute.substring(2)) || 1,
+    };
+  }
+
+  // Every hour
+  if (
+    hour === '*' &&
+    day === '*' &&
+    month === '*' &&
+    weekday === '*'
+  ) {
+    return {
+      ...result,
+      mode: 'hourly',
+      time: `00:${pad(Number(minute) || 0)}`,
+    };
+  }
+
+  // Weekly
+  if (
+    weekday !== '*' &&
+    day === '*' &&
+    month === '*'
+  ) {
+    return {
+      ...result,
+      mode: 'weekly',
+      time: `${pad(Number(hour) || 0)}:${pad(Number(minute) || 0)}`,
+      weekdays: weekday.split(','),
+    };
+  }
+
+  // Monthly
+  if (
+    day !== '*' &&
+    month === '*' &&
+    weekday === '*'
+  ) {
+    const dayNumber = Number(day) || 1;
+
+    return {
+      ...result,
+      mode: 'monthly',
+      date: `${todayStr().slice(0, 7)}-${pad(dayNumber)}`,
+      time: `${pad(Number(hour) || 0)}:${pad(Number(minute) || 0)}`,
+    };
+  }
+
+  // "Once" cron
+  //
+  // Note:
+  // A standard cron expression cannot distinguish
+  // "once" from a yearly recurrence.
+  //
+  // We treat a specific day/month cron as "once"
+  // when editing it.
+  if (
+    day !== '*' &&
+    month !== '*' &&
+    weekday === '*'
+  ) {
+    const year = new Date().getFullYear();
+
+    return {
+      ...result,
+      mode: 'once',
+      date: `${year}-${pad(Number(month) || 1)}-${pad(Number(day) || 1)}`,
+      time: `${pad(Number(hour) || 0)}:${pad(Number(minute) || 0)}`,
+    };
+  }
+
+  // Daily
+  if (
+    hour !== '*' &&
+    day === '*' &&
+    month === '*' &&
+    weekday === '*'
+  ) {
+    return {
+      ...result,
+      mode: 'daily',
+      time: `${pad(Number(hour) || 0)}:${pad(Number(minute) || 0)}`,
+    };
+  }
+
+  return result;
+};
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scheduler page
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function Scheduler() {
   const [rows, setRows] = useState([]);
   const [wfs, setWfs] = useState([]);
+
   const [loading, setLoading] = useState(true);
+
   const [open, setOpen] = useState(false);
+
+  const [editing, setEditing] = useState(null);
+
+  const [saving, setSaving] = useState(false);
+
+  const [runningId, setRunningId] = useState(null);
+
   const [form, setForm] = useState(newForm());
+
   const [toast, notify] = useToast();
 
-  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const usesDate = form.mode === 'once' || form.mode === 'monthly';
-  const usesTime = form.mode !== 'minutes';
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Form helpers
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const set = (patch) => {
+    setForm((f) => ({
+      ...f,
+      ...patch,
+    }));
+  };
+
+
+  const usesDate =
+    form.mode === 'once' ||
+    form.mode === 'monthly';
+
+  const usesTime =
+    form.mode !== 'minutes';
+
   const cron = toCron(form);
 
-  // Load schedules and workflows independently so one failure doesn't blank the other
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Load schedules + workflows
+  // ───────────────────────────────────────────────────────────────────────────
+
   const load = async () => {
-    const [s, w] = await Promise.allSettled([schedulerAPI.getAll(), workflowAPI.getAll()]);
+    setLoading(true);
 
-    if (w.status === 'fulfilled') setWfs(asList(w.value.data, 'workflows', 'items', 'results', 'data'));
-    else notify(errMsg(w.reason, 'Failed to load workflows'), 'error');
+    const [s, w] = await Promise.allSettled([
+      schedulerAPI.getAll(),
+      workflowAPI.getAll(),
+    ]);
 
-    if (s.status === 'fulfilled') setRows(asList(s.value.data, 'schedules', 'items', 'results'));
-    else notify(errMsg(s.reason, 'Failed to load schedules'), 'error');
+    if (w.status === 'fulfilled') {
+      setWfs(
+        asList(
+          w.value.data,
+          'workflows',
+          'items',
+          'results',
+          'data'
+        )
+      );
+    } else {
+      notify(
+        errMsg(
+          w.reason,
+          'Failed to load workflows'
+        ),
+        'error'
+      );
+    }
+
+    if (s.status === 'fulfilled') {
+      setRows(
+        asList(
+          s.value.data,
+          'schedules',
+          'items',
+          'results'
+        )
+      );
+    } else {
+      notify(
+        errMsg(
+          s.reason,
+          'Failed to load schedules'
+        ),
+        'error'
+      );
+    }
 
     setLoading(false);
   };
-  useEffect(() => { load(); }, []); // eslint-disable-line
+
+
+  useEffect(() => {
+    load();
+  }, []); // eslint-disable-line
+
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Workflow name
+  // ───────────────────────────────────────────────────────────────────────────
 
   const wfName = (id) => {
-    const w = wfs.find((x) => String(x.id) === String(id));
+    const w = wfs.find(
+      (x) => String(x.id) === String(id)
+    );
+
     return w ? wfLabel(w) : id;
   };
 
-  const openModal = () => { setForm(newForm()); setOpen(true); };
 
-  const toggleDay = (v) =>
-    set({ weekdays: form.weekdays.includes(v) ? form.weekdays.filter((x) => x !== v) : [...form.weekdays, v] });
+  // ───────────────────────────────────────────────────────────────────────────
+  // New schedule
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const openNew = () => {
+    setEditing(null);
+    setForm(newForm());
+    setOpen(true);
+  };
+
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Edit schedule
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const openEdit = (schedule) => {
+    setEditing(schedule);
+    setForm(cronToForm(schedule));
+    setOpen(true);
+  };
+
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Close modal
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const closeModal = () => {
+    if (saving) return;
+
+    setOpen(false);
+    setEditing(null);
+    setForm(newForm());
+  };
+
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Weekday toggle
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const toggleDay = (value) => {
+    setForm((f) => {
+      const exists = f.weekdays.includes(value);
+
+      return {
+        ...f,
+        weekdays: exists
+          ? f.weekdays.filter((x) => x !== value)
+          : [...f.weekdays, value],
+      };
+    });
+  };
+
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Save / update
+  // ───────────────────────────────────────────────────────────────────────────
 
   const save = async (e) => {
     e.preventDefault();
-    if (!form.workflow) return notify('Select a workflow', 'error');
-    if (usesDate && !form.date) return notify('Pick a date', 'error');
-    if (usesTime && !form.time) return notify('Pick a time', 'error');
-    if (form.mode === 'weekly' && form.weekdays.length === 0) return notify('Pick at least one weekday', 'error');
-    if (form.mode === 'once' && new Date(`${form.date}T${form.time}`) <= new Date())
-      return notify('Pick a date and time in the future', 'error');
+
+    if (!form.workflow) {
+      return notify(
+        'Select a workflow',
+        'error'
+      );
+    }
+
+    if (usesDate && !form.date) {
+      return notify(
+        'Pick a date',
+        'error'
+      );
+    }
+
+    if (usesTime && !form.time) {
+      return notify(
+        'Pick a time',
+        'error'
+      );
+    }
+
+    if (
+      form.mode === 'weekly' &&
+      form.weekdays.length === 0
+    ) {
+      return notify(
+        'Pick at least one weekday',
+        'error'
+      );
+    }
+
+    if (
+      form.mode === 'once' &&
+      new Date(`${form.date}T${form.time}`) <= new Date()
+    ) {
+      return notify(
+        'Pick a date and time in the future',
+        'error'
+      );
+    }
+
+    if (!cron) {
+      return notify(
+        'Invalid schedule',
+        'error'
+      );
+    }
+
+    setSaving(true);
 
     try {
-      await schedulerAPI.upsert(form.workflow, { cron, timezone: form.timezone, enabled: form.enabled });
-      notify('Schedule saved');
-      setOpen(false);
-      load();
+      if (editing) {
+        // Update existing schedule
+        await schedulerAPI.patch(
+          editing.id,
+          {
+            freq: 'custom',
+            cron,
+            enabled: form.enabled,
+          }
+        );
+
+        notify('Schedule updated');
+      } else {
+        // Create schedule
+        await schedulerAPI.upsert(
+          form.workflow,
+          {
+            cron,
+            timezone: form.timezone,
+            enabled: form.enabled,
+          }
+        );
+
+        notify('Schedule saved');
+      }
+
+      closeModal();
+      await load();
+
     } catch (er) {
-      notify(errMsg(er, 'Failed to save schedule'), 'error');
+      notify(
+        errMsg(
+          er,
+          editing
+            ? 'Failed to update schedule'
+            : 'Failed to save schedule'
+        ),
+        'error'
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
-  const toggle = async (s) => {
-    const cur = pick(s, ['enabled', 'is_active']) !== false;
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Enable / disable
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const toggle = async (schedule) => {
+    const current =
+      pick(
+        schedule,
+        ['enabled', 'is_active']
+      ) !== false;
+
     try {
-      await schedulerAPI.patch(s.id, { enabled: !cur });
-      setRows((r) => r.map((x) => (x.id === s.id ? { ...x, enabled: !cur } : x)));
+      await schedulerAPI.patch(
+        schedule.id,
+        {
+          enabled: !current,
+        }
+      );
+
+      setRows((rows) =>
+        rows.map((row) =>
+          row.id === schedule.id
+            ? {
+                ...row,
+                enabled: !current,
+              }
+            : row
+        )
+      );
+
+      notify(
+        !current
+          ? 'Schedule enabled'
+          : 'Schedule disabled'
+      );
+
     } catch (er) {
-      notify(errMsg(er), 'error');
+      notify(
+        errMsg(
+          er,
+          'Failed to update schedule'
+        ),
+        'error'
+      );
     }
   };
 
-  const remove = async (s) => {
-    if (!window.confirm('Delete this schedule?')) return;
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Delete
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const remove = async (schedule) => {
+    const workflowName = wfName(
+      schedule.workflow_id
+    );
+
+    if (
+      !window.confirm(
+        `Delete the schedule for "${workflowName}"?`
+      )
+    ) {
+      return;
+    }
+
     try {
-      await schedulerAPI.delete(s.id);
-      setRows((r) => r.filter((x) => x.id !== s.id));
+      await schedulerAPI.delete(
+        schedule.id
+      );
+
+      setRows((rows) =>
+        rows.filter(
+          (row) => row.id !== schedule.id
+        )
+      );
+
       notify('Schedule deleted');
+
     } catch (er) {
-      notify(errMsg(er), 'error');
+      notify(
+        errMsg(
+          er,
+          'Failed to delete schedule'
+        ),
+        'error'
+      );
     }
   };
+
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Run now
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const runNow = async (schedule) => {
+    const workflowName = wfName(
+      schedule.workflow_id
+    );
+
+    const confirmed = window.confirm(
+      `Run "${workflowName}" now?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setRunningId(schedule.id);
+
+    try {
+      await schedulerAPI.run(
+        schedule.id
+      );
+
+      notify(
+        'Schedule run triggered'
+      );
+
+      await load();
+
+    } catch (er) {
+      notify(
+        errMsg(
+          er,
+          'Failed to run schedule'
+        ),
+        'error'
+      );
+    } finally {
+      setRunningId(null);
+    }
+  };
+
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Render
+  // ───────────────────────────────────────────────────────────────────────────
 
   return (
     <div className="page">
-      <PageHeader title="Schedules" subtitle="Run workflows automatically on a schedule">
-        <button className="btn btn-primary" onClick={openModal}>
-          <Plus size={16} />New schedule
+
+      <PageHeader
+        title="Schedules"
+        subtitle="Run workflows automatically on a schedule"
+      >
+        <button
+          className="btn btn-primary"
+          onClick={openNew}
+        >
+          <Plus size={16} />
+          New schedule
         </button>
       </PageHeader>
 
+
+      {/* ─────────────────────────────────────────────────────────────────────
+          Schedule list
+      ───────────────────────────────────────────────────────────────────── */}
+
       {loading ? (
         <Spinner />
+
       ) : rows.length === 0 ? (
-        <Empty icon={Clock} title="No schedules" text="Create a schedule, or add a Schedule Trigger node in the editor." />
+
+        <Empty
+          icon={Clock}
+          title="No schedules"
+          text="Create a schedule, or add a Schedule Trigger node in the editor."
+        />
+
       ) : (
+
         <div className="card flush">
+
           <table className="table">
+
             <thead>
-              <tr><th>Workflow</th><th>Cron</th><th>Last run</th><th>Next run</th><th>Active</th><th /></tr>
+              <tr>
+                <th>Workflow</th>
+                <th>Cron</th>
+                <th>Last run</th>
+                <th>Next run</th>
+                <th>Active</th>
+                <th>Actions</th>
+              </tr>
             </thead>
+
+
             <tbody>
-              {rows.map((s) => {
-                const next = pick(s, ['next_run_at', 'next_run']);
+
+              {rows.map((schedule) => {
+
+                const next = pick(
+                  schedule,
+                  [
+                    'next_run_at',
+                    'next_run',
+                  ]
+                );
+
+                const enabled =
+                  pick(
+                    schedule,
+                    [
+                      'enabled',
+                      'is_active',
+                    ]
+                  ) !== false;
+
+                const running =
+                  runningId === schedule.id;
+
+
                 return (
-                  <tr key={s.id}>
-                    <td><b>{wfName(s.workflow_id)}</b></td>
-                    <td><code className="code-chip">{pick(s, ['cron_expression', 'cron']) || '—'}</code></td>
-                    <td>{timeAgo(pick(s, ['last_run_at', 'last_run']))}</td>
-                    <td>{next ? new Date(next).toLocaleString() : '—'}</td>
+                  <tr key={schedule.id}>
+
+                    {/* Workflow */}
+                    <td>
+                      <b>
+                        {wfName(
+                          schedule.workflow_id
+                        )}
+                      </b>
+                    </td>
+
+
+                    {/* Cron */}
+                    <td>
+                      <code className="code-chip">
+                        {pick(
+                          schedule,
+                          [
+                            'cron_expression',
+                            'cron',
+                          ]
+                        ) || '—'}
+                      </code>
+                    </td>
+
+
+                    {/* Last run */}
+                    <td>
+                      {timeAgo(
+                        pick(
+                          schedule,
+                          [
+                            'last_run_at',
+                            'last_run',
+                          ]
+                        )
+                      )}
+                    </td>
+
+
+                    {/* Next run */}
+                    <td>
+                      {next
+                        ? new Date(next).toLocaleString()
+                        : '—'}
+                    </td>
+
+
+                    {/* Active */}
                     <td>
                       <label className="switch">
+
                         <input
                           type="checkbox"
-                          checked={pick(s, ['enabled', 'is_active']) !== false}
-                          onChange={() => toggle(s)}
+                          checked={enabled}
+                          onChange={() =>
+                            toggle(schedule)
+                          }
                         />
+
                         <span />
+
                       </label>
                     </td>
+
+
+                    {/* Actions */}
                     <td className="right">
-                      <button className="icon-btn danger" onClick={() => remove(s)}>
-                        <Trash2 size={15} />
-                      </button>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 6,
+                          justifyContent: 'flex-end',
+                        }}
+                      >
+
+                        {/* Edit */}
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="Edit schedule"
+                          onClick={() =>
+                            openEdit(schedule)
+                          }
+                        >
+                          <Pencil size={15} />
+                        </button>
+
+
+                        {/* Run now */}
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="Run now"
+                          disabled={running}
+                          onClick={() =>
+                            runNow(schedule)
+                          }
+                        >
+                          <Play
+                            size={15}
+                            fill={
+                              running
+                                ? 'currentColor'
+                                : 'none'
+                            }
+                          />
+                        </button>
+
+
+                        {/* Delete */}
+                        <button
+                          type="button"
+                          className="icon-btn danger"
+                          title="Delete schedule"
+                          onClick={() =>
+                            remove(schedule)
+                          }
+                        >
+                          <Trash2 size={15} />
+                        </button>
+
+                      </div>
+
                     </td>
+
                   </tr>
                 );
               })}
+
             </tbody>
+
           </table>
+
         </div>
       )}
 
+
+      {/* ─────────────────────────────────────────────────────────────────────
+          Create / Edit modal
+      ───────────────────────────────────────────────────────────────────── */}
+
       {open && (
-        <div className="modal-bg" onClick={() => setOpen(false)}>
-          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+
+        <div
+          className="modal-bg"
+          onClick={closeModal}
+        >
+
+          <form
+            className="modal"
+            onClick={(e) =>
+              e.stopPropagation()
+            }
+            onSubmit={save}
+          >
+
+            {/* Header */}
             <div className="modal-head">
-              <h3>New schedule</h3>
-              <button type="button" className="icon-btn" onClick={() => setOpen(false)}>
+
+              <h3>
+                {editing
+                  ? 'Edit schedule'
+                  : 'New schedule'}
+              </h3>
+
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={closeModal}
+                disabled={saving}
+              >
                 <X size={16} />
               </button>
+
             </div>
+
 
             {/* Workflow */}
             <div className="field">
-              <label>Workflow</label>
-              <select className="input" value={form.workflow} onChange={(e) => set({ workflow: e.target.value })}>
-                <option value="">{wfs.length ? 'Select…' : 'No workflows found'}</option>
+
+              <label>
+                Workflow
+              </label>
+
+              <select
+                className="input"
+                value={form.workflow}
+                onChange={(e) =>
+                  set({
+                    workflow:
+                      e.target.value,
+                  })
+                }
+                disabled={Boolean(editing)}
+              >
+
+                <option value="">
+                  {wfs.length
+                    ? 'Select…'
+                    : 'No workflows found'}
+                </option>
+
                 {wfs.map((w) => (
-                  <option key={w.id} value={w.id}>{wfLabel(w)}</option>
+                  <option
+                    key={w.id}
+                    value={w.id}
+                  >
+                    {wfLabel(w)}
+                  </option>
                 ))}
+
               </select>
+
+              {editing && (
+                <small
+                  style={{
+                    opacity: 0.65,
+                  }}
+                >
+                  Workflow cannot be changed
+                  while editing. Create a new
+                  schedule for another workflow.
+                </small>
+              )}
+
             </div>
 
-            {/* Repeat (controlled, so the selection stays visible) */}
+
+            {/* Repeat */}
             <div className="field">
-              <label>Repeat</label>
-              <select className="input" value={form.mode} onChange={(e) => set({ mode: e.target.value })}>
-                {MODES.map(([v, l]) => (
-                  <option key={v} value={v}>{l}</option>
-                ))}
+
+              <label>
+                Repeat
+              </label>
+
+              <select
+                className="input"
+                value={form.mode}
+                onChange={(e) =>
+                  set({
+                    mode: e.target.value,
+                  })
+                }
+              >
+
+                {MODES.map(
+                  ([value, label]) => (
+                    <option
+                      key={value}
+                      value={value}
+                    >
+                      {label}
+                    </option>
+                  )
+                )}
+
               </select>
+
             </div>
+
 
             {/* Every N minutes */}
             {form.mode === 'minutes' && (
+
               <div className="field">
-                <label>Every (minutes)</label>
+
+                <label>
+                  Every (minutes)
+                </label>
+
                 <input
                   type="number"
                   min="1"
                   max="59"
                   className="input"
                   value={form.everyN}
-                  onChange={(e) => set({ everyN: e.target.value })}
+                  onChange={(e) =>
+                    set({
+                      everyN:
+                        e.target.value,
+                    })
+                  }
                 />
+
               </div>
             )}
 
-            {/* Weekday chips */}
+
+            {/* Weekly days */}
             {form.mode === 'weekly' && (
+
               <div className="field">
-                <label>Days</label>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {WEEKDAYS.map(([v, n]) => (
-                    <button
-                      key={v}
-                      type="button"
-                      className={`btn ${form.weekdays.includes(v) ? 'btn-primary' : 'btn-ghost'}`}
-                      style={{ padding: '4px 10px' }}
-                      onClick={() => toggleDay(v)}
-                    >
-                      {n}
-                    </button>
-                  ))}
+
+                <label>
+                  Days
+                </label>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 6,
+                    flexWrap: 'wrap',
+                  }}
+                >
+
+                  {WEEKDAYS.map(
+                    ([value, name]) => (
+
+                      <button
+                        key={value}
+                        type="button"
+                        className={`btn ${
+                          form.weekdays.includes(
+                            value
+                          )
+                            ? 'btn-primary'
+                            : 'btn-ghost'
+                        }`}
+                        style={{
+                          padding:
+                            '4px 10px',
+                        }}
+                        onClick={() =>
+                          toggleDay(value)
+                        }
+                      >
+                        {name}
+                      </button>
+
+                    )
+                  )}
+
                 </div>
+
               </div>
             )}
 
-            {/* Date picker (Once / Monthly) */}
+
+            {/* Date */}
             {usesDate && (
+
               <div className="field">
-                <label>{form.mode === 'monthly' ? 'Day of month (from date)' : 'Date'}</label>
+
+                <label>
+                  {form.mode === 'monthly'
+                    ? 'Day of month'
+                    : 'Date'}
+                </label>
+
                 <input
                   type="date"
                   className="input"
-                  min={form.mode === 'once' ? todayStr() : undefined}
+                  min={
+                    form.mode === 'once'
+                      ? todayStr()
+                      : undefined
+                  }
                   value={form.date}
-                  onChange={(e) => set({ date: e.target.value })}
+                  onChange={(e) =>
+                    set({
+                      date:
+                        e.target.value,
+                    })
+                  }
                 />
-                {form.mode === 'monthly' && Number((form.date || '').split('-')[2]) > 28 && (
-                  <small style={{ opacity: 0.7 }}>Months without this day will be skipped.</small>
-                )}
+
+                {form.mode === 'monthly' &&
+                  Number(
+                    (
+                      form.date || ''
+                    ).split('-')[2]
+                  ) > 28 && (
+
+                    <small
+                      style={{
+                        opacity: 0.7,
+                      }}
+                    >
+                      Months without this
+                      day will be skipped.
+                    </small>
+
+                  )}
+
               </div>
             )}
 
-            {/* Clock picker */}
+
+            {/* Time */}
             {usesTime && (
+
               <div className="field">
-                <label>{form.mode === 'hourly' ? 'At minute (uses the minutes of this time)' : 'Time'}</label>
-                <input type="time" className="input" value={form.time} onChange={(e) => set({ time: e.target.value })} />
+
+                <label>
+                  {form.mode === 'hourly'
+                    ? 'At minute'
+                    : 'Time'}
+                </label>
+
+                <input
+                  type="time"
+                  className="input"
+                  value={form.time}
+                  onChange={(e) =>
+                    set({
+                      time:
+                        e.target.value,
+                    })
+                  }
+                />
+
               </div>
             )}
 
-            <div className="field">
-              <label>Timezone</label>
-              <input className="input" value={form.timezone} onChange={(e) => set({ timezone: e.target.value })} />
-            </div>
 
-            {/* Preview of what will be saved */}
+            {/* Timezone */}
             <div className="field">
-              <label>Summary</label>
-              <div>{describe(form)}</div>
-              <code className="code-chip">{cron}</code>
-            </div>
 
-            <div className="field row">
-              <label>Active</label>
-              <label className="switch">
-                <input type="checkbox" checked={form.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
-                <span />
+              <label>
+                Timezone
               </label>
+
+              <input
+                className="input"
+                value={form.timezone}
+                onChange={(e) =>
+                  set({
+                    timezone:
+                      e.target.value,
+                  })
+                }
+              />
+
             </div>
 
-            <div className="modal-foot">
-              <button type="button" className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button>
-              <button className="btn btn-primary">Save schedule</button>
+
+            {/* Summary */}
+            <div className="field">
+
+              <label>
+                Summary
+              </label>
+
+              <div>
+                {describe(form)}
+              </div>
+
+              <code
+                className="code-chip"
+                style={{
+                  display: 'inline-block',
+                  marginTop: 6,
+                }}
+              >
+                {cron}
+              </code>
+
             </div>
+
+
+            {/* Active */}
+            <div className="field row">
+
+              <label>
+                Active
+              </label>
+
+              <label className="switch">
+
+                <input
+                  type="checkbox"
+                  checked={form.enabled}
+                  onChange={(e) =>
+                    set({
+                      enabled:
+                        e.target.checked,
+                    })
+                  }
+                />
+
+                <span />
+
+              </label>
+
+            </div>
+
+
+            {/* Footer */}
+            <div className="modal-foot">
+
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={closeModal}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={saving}
+              >
+                {saving
+                  ? 'Saving...'
+                  : editing
+                    ? 'Update schedule'
+                    : 'Save schedule'}
+              </button>
+
+            </div>
+
           </form>
+
         </div>
       )}
+
+
       {toast}
+
     </div>
   );
 }

@@ -4,49 +4,27 @@ import {
   Users,
   Activity,
   Package,
-  ArrowLeft,
   LogOut,
   ShieldCheck,
-  Zap,
 } from 'lucide-react';
 import { authAPI, setAuthToken } from '../../utils/api';
 
 const items = [
-  {
-    to: '/admin',
-    label: 'Overview',
-    icon: LayoutDashboard,
-  },
-  {
-    to: '/admin',
-    label: 'Users',
-    icon: Users,
-  },
-  {
-    to: '/admin',
-    label: 'Run History',
-    icon: Activity,
-  },
-  {
-    to: '/admin',
-    label: 'Packages',
-    icon: Package,
-  },
+  { to: '/admin?tab=overview', label: 'Overview', icon: LayoutDashboard },
+  { to: '/admin?tab=users', label: 'Users', icon: Users },
+  { to: '/admin?tab=runs', label: 'Run History', icon: Activity },
+  { to: '/admin?tab=packages', label: 'Packages', icon: Package },
 ];
 
 export default function AdminSidebar() {
   const navigate = useNavigate();
 
-  const user = JSON.parse(
-    localStorage.getItem('user') || 'null'
-  );
+  const user = JSON.parse(localStorage.getItem('user') || 'null');
 
   const logout = async () => {
     try {
       await authAPI.logout();
-    } catch {
-      // Token may already be invalid
-    }
+    } catch {}
 
     setAuthToken(null);
     localStorage.removeItem('user');
@@ -59,10 +37,7 @@ export default function AdminSidebar() {
         <span className="brand-mark">
           <ShieldCheck size={18} />
         </span>
-
-        <span className="nav-label">
-          ADMIN
-        </span>
+        <span className="nav-label">ADMIN</span>
       </div>
 
       <div className="admin-badge">
@@ -71,14 +46,12 @@ export default function AdminSidebar() {
       </div>
 
       <nav>
-        {items.map(({ to, label, icon: Icon }, index) => (
+        {items.map(({ to, label, icon: Icon }) => (
           <NavLink
-            key={`${label}-${index}`}
+            key={label}
             to={to}
             title={label}
-            className={({ isActive }) =>
-              `nav-link ${isActive ? 'active' : ''}`
-            }
+            className="nav-link"
           >
             <Icon size={19} />
             <span className="nav-label">{label}</span>
@@ -93,16 +66,13 @@ export default function AdminSidebar() {
           </div>
         )}
 
-
         <button
           className="nav-link"
           onClick={logout}
           title="Log out"
         >
           <LogOut size={19} />
-          <span className="nav-label">
-            Log out
-          </span>
+          <span className="nav-label">Log out</span>
         </button>
       </div>
     </aside>

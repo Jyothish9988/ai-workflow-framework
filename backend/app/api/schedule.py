@@ -38,26 +38,6 @@ async def list_user_schedules(
     )
 
 
-# ─────────────────────────────────────────────
-# GET BY ID
-# ─────────────────────────────────────────────
-@router.get("/{schedule_id}", response_model=ScheduleResponse)
-async def get_schedule_by_id_api(
-    schedule_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    schedule = await get_schedule_by_id(
-        db=db,
-        schedule_id=schedule_id,
-        user_id=str(current_user.id),
-    )
-
-    if not schedule:
-        raise HTTPException(status_code=404, detail="Schedule not found")
-
-    return schedule
-
 
 # ─────────────────────────────────────────────
 # GET BY WORKFLOW
@@ -71,6 +51,26 @@ async def get_schedule_by_workflow_api(
     schedule = await get_schedule(
         db=db,
         workflow_id=workflow_id,
+        user_id=str(current_user.id),
+    )
+
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    return schedule
+
+# ─────────────────────────────────────────────
+# GET BY ID
+# ─────────────────────────────────────────────
+@router.get("/{schedule_id}", response_model=ScheduleResponse)
+async def get_schedule_by_id_api(
+    schedule_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    schedule = await get_schedule_by_id(
+        db=db,
+        schedule_id=schedule_id,
         user_id=str(current_user.id),
     )
 

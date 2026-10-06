@@ -65,6 +65,10 @@ async def execute_leaf(node: dict, ctx: dict, cancel_event=None):
     if handler:
         return await handler(data, raw, ctx, cancel_event)
 
+    if ntype.startswith("pkg_"):          # admin-uploaded package node
+        from app.services.package_nodes import run_package
+        return await run_package(ntype, data, ctx, set_nested)
+
     # Fall back to plugin-style handlers (Gmail, etc.) registered elsewhere.
     from app.services.node_handlers import HANDLERS
     external = HANDLERS.get(ntype)

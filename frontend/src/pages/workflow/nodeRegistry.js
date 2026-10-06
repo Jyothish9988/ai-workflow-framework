@@ -1,5 +1,6 @@
+import { createElement } from 'react';
 import {
-  Play, Globe, Mail, Bot, GitBranch, Split, Timer, Repeat, MessageSquare, Send, Pencil, Braces, Type,
+  Package, Play, Globe, Mail, Bot, GitBranch, Split, Timer, Repeat, MessageSquare, Send, Pencil, Braces, Type,
   Calendar, CircleDot, Hash, Regex, Wand2, OctagonX, SkipForward, Inbox,
 } from 'lucide-react';
 
@@ -9,6 +10,7 @@ export const CATEGORIES = [
   { id: 'data', label: 'Data Transformation' },
   { id: 'ai', label: 'AI' },
   { id: 'app', label: 'Apps & Integrations' },
+  { id: 'package', label: 'Packages' },
 ];
 
 const f = (key, label, type = 'text', extra = {}) => ({ key, label, type, ...extra });
@@ -141,4 +143,36 @@ export const defaultData = (type) => {
   const data = {};
   getDef(type).fields.forEach((fl) => { if (fl.default !== undefined) data[fl.key] = fl.default; });
   return data;
+};
+
+/** Add admin-published package nodes (GET /packages: only those enabled for this user). */
+export const registerPackages = (list = []) => {
+  list.forEach((p) => {
+    const ops = p.operations || [];
+    const fields = [];
+    if (p.auth) fields.push(f('connectionId', `${p.auth.app} connection`, 'integration', { app: p.auth.app }));
+    if (ops.length) fields.push(f('operation', 'Operation', 'select', { default: ops[0], options: opts(...ops) }));
+    (p.fields || []).forEach((x) => fields.push(f(x.key, x.label || x.key, x.type || 'text', {
+      default: x.default, placeholder: x.placeholder, rows: x.rows, options: x.options ? opts(...x.options) : undefined,
+      show: x.showFor ? (d) => x.showFor.includes(d.operation || ops[0]) : undefined,
+    })));
+    fields.push(f('outputVar', 'Output variable', 'text', ops.length
+      ? { placeholder: `default: ${p.output || 'per operation'}` }
+      : { default: p.output || `pkg.${p.name.toLowerCase().replace(/\s+/g, '_')}` }));
+    NODES[p.node_type] = {
+      label: p.name, cat: 'package', color: p.color || '#6c5ce7', desc: p.description || 'Package node', fields,
+      icon: p.icon
+        ? ({ size = 24 }) => createElement('img', { src: p.icon, width: size, height: size, style: { objectFit: 'contain', borderRadius: 4 } })
+        : Package,
+      summary: (d) => (ops.length ? `${d.operation || ops[0]}${d.cell ? ' · ' + d.cell : ''}` : d.outputVar || ''),
+    };
+  });
+};
+
+/** Keep (don't silently convert) package nodes that are disabled / unassigned for this user. */
+export const registerMissingPackages = (types = []) => {
+  types.filter((t) => t?.startsWith('pkg_') && !NODES[t]).forEach((t) => {
+    NODES[t] = { label: 'Unavailable package', cat: 'hidden', color: '#94a3b8', icon: Package, fields: [],
+      desc: 'Disabled or not assigned to you', summary: () => 'unavailable' };
+  });
 };

@@ -135,9 +135,8 @@ export const adminAPI = {
   runNodes: (id, includeData = false) => api.get(`/admin/runs/${id}/nodes`, { params: { include_data: includeData } }),
   terminateRun: (id) => api.post(`/admin/runs/${id}/terminate`),
   packages: () => api.get('/admin/packages'),
-  packageRuntime: () => api.get('/admin/packages/runtime'),
-  createPackage: (form) => api.post('/admin/packages', form, multipart),   // form: FormData(name, description, file, icon?)
-  updatePackage: (id, form) => api.put(`/admin/packages/${id}`, form, multipart),
+  createPackage: (body) => api.post('/admin/packages', body),   // { manifest, access, user_ids, is_active }
+  updatePackage: (id, body) => api.put(`/admin/packages/${id}`, body),
   deletePackage: (id) => api.delete(`/admin/packages/${id}`),
 };
 
