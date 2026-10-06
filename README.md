@@ -53,6 +53,9 @@ AI Workflow Framework (AWF) combines a React-based visual workflow editor with a
 
 ![Scheduler](screenshots/scheduler.png)
 
+### Node Manager
+![Node Manager](screenshots/nodemanager.png)
+
 ---
 
 ## 🧩 Workflow Nodes
@@ -261,10 +264,10 @@ Workflow values can be referenced through context paths such as:
                     │       FastAPI Backend    │
                     │                          │
                     │ Authentication           │
-                    │ Workflow APIs             │
-                    │ Integration APIs           │
-                    │ LLM APIs                  │
-                    │ Scheduling                 │
+                    │ Workflow APIs            │
+                    │ Integration APIs         │
+                    │ LLM APIs                 │
+                    │ Scheduling               │
                     └────────────┬─────────────┘
                                  │
                 ┌────────────────┼─────────────────┐
@@ -278,8 +281,8 @@ Workflow values can be referenced through context paths such as:
        │ Executions     │ │ Control Flow  │ │ Groq          │
        │ Integrations   │ │ Node Handlers │ │ Ollama        │
        └────────────────┘ └───────────────┘ └───────┬───────┘
-                                                     │
-                                                     ▼
+                                                    │
+                                                    ▼
                                              ┌───────────────┐
                                              │ External APIs │
                                              │ / Local LLM   │

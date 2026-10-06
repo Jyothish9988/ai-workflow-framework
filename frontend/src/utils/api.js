@@ -99,6 +99,8 @@ export const schedulerAPI = {
   upsert: (wid, data) => api.post(`/schedules/${wid}`, scheduleBody(data)),
   patch: (id, data) => api.patch(`/schedules/${id}`, data),
   delete: (id) => api.delete(`/schedules/${id}`),
+  // Starts the schedule's workflow immediately; resolves { execution_id, status }
+  run: (id) => api.post(`/schedules/${id}/run-now`),
 };
 
  export const llmAPI = {

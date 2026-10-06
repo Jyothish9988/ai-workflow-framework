@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import traceback
+from typing import Awaitable, Callable, Optional
 
 from sqlalchemy import update
 
@@ -14,14 +15,34 @@ MAX_CONCURRENT_RUNS = 20
 _tasks: set[asyncio.Task] = set()
 
 
-async def start_run(workflow_json: dict, workflow_id, user_id) -> str:
+class RunnerBusy(RuntimeError):
+    """Raised when MAX_CONCURRENT_RUNS is reached. Callers may retry later."""
+
+
+async def start_run(
+    workflow_json: dict,
+    workflow_id,
+    user_id,
+    on_done: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> str:
     """Start a run in the background and return its execution id.
-    Raises RuntimeError if the workflow is invalid or the server is busy."""
+
+    `on_done(execution_id)` (optional) is awaited after the run has finished and been
+    committed, whether it succeeded or failed - used by schedules to record the outcome.
+    Raises RuntimeError if the workflow is invalid, RunnerBusy if the server is busy."""
     if len(_tasks) >= MAX_CONCURRENT_RUNS:
-        raise RuntimeError("Too many workflows are running right now, try again shortly")
+        raise RunnerBusy("Too many workflows are running right now, try again shortly")
 
     workflow_json = copy.deepcopy(workflow_json)
     started: asyncio.Future = asyncio.get_running_loop().create_future()
+
+    async def _notify_done():
+        if on_done is None or not started.done() or started.exception() is not None:
+            return
+        try:
+            await on_done(started.result())
+        except Exception:
+            traceback.print_exc()
 
     async def _runner():
         async with AsyncSessionLocal() as db:          # own session: the request's one closes
@@ -40,6 +61,7 @@ async def start_run(workflow_json: dict, workflow_id, user_id) -> str:
                         .values(status=ExecutionStatus.FAILED, error_message=f"Engine error: {e}")
                     )
                     await db.commit()
+        await _notify_done()
 
     task = asyncio.create_task(_runner())
     _tasks.add(task)

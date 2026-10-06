@@ -26,3 +26,4 @@ croniter
 google-auth
 requests
  
+tzdata

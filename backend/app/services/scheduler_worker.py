@@ -1,43 +1,71 @@
-"""Tiny in-process cron runner for /schedules. Run uvicorn with ONE worker."""
+"""Tiny in-process cron runner for /schedules.
+
+Started from the app lifespan in main.py. Rows are claimed with SELECT ... FOR UPDATE
+SKIP LOCKED, so running several uvicorn workers will not double-fire a schedule."""
 import asyncio
-from datetime import datetime, timezone
-from uuid import UUID
+import logging
 
 from croniter import croniter
 from sqlalchemy import select
 
 from app.database.db import AsyncSessionLocal
 from app.models.scheduled_workflow import ScheduledWorkflow
-from app.models.workflow import Workflow
-from app.services.execution_engine import execute_workflow
-from app.services.schedule_service import record_run
+from app.services.run_manager import RunnerBusy
+from app.services.schedule_service import (
+    compute_next_run,
+    dispatch_run,
+    is_one_shot,
+    utcnow,
+)
+
+log = logging.getLogger("scheduler")
 
 
 async def _tick():
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
-            select(ScheduledWorkflow).where(ScheduledWorkflow.enabled == True, ScheduledWorkflow.cron.isnot(None))  # noqa: E712
+            select(ScheduledWorkflow)
+            .where(ScheduledWorkflow.enabled == True, ScheduledWorkflow.cron.isnot(None))  # noqa: E712
+            .with_for_update(skip_locked=True, of=ScheduledWorkflow)
         )).scalars().all()
+
         for s in rows:
+            tz = s.timezone or "UTC"
+
             if not croniter.is_valid(s.cron):
+                s.enabled = False
+                s.next_run_at = None
+                s.last_error = f"Disabled: invalid cron expression '{s.cron}'"
                 continue
-            base = max(t for t in (s.last_run_at, s.updated_at, s.created_at) if t)
-            nxt = croniter(s.cron, base).get_next(datetime)
-            s.next_run_at = nxt
-            if nxt > now:
+
+            # Legacy rows / rows created before the worker saw them: arm, don't fire.
+            if s.next_run_at is None:
+                s.next_run_at = compute_next_run(s.cron, tz, now)
                 continue
-            ok = True
+
+            if s.next_run_at > now:
+                continue
+
+            # ── Due ──────────────────────────────────────────────────────────
             try:
-                wf = await db.get(Workflow, UUID(str(s.workflow_id)))
-                if not wf or not wf.workflow_json:
-                    raise RuntimeError("workflow missing or empty")
-                await execute_workflow(wf.workflow_json, {}, db, wf.id, UUID(str(s.user_id)))
-            except Exception as e:  # keep the loop alive
-                ok = False
-                print(f"[scheduler] {s.id} failed: {e}")
-            await record_run(db, s, ok)
-            s.next_run_at = croniter(s.cron, now).get_next(datetime)
+                await dispatch_run(db, s)
+            except RunnerBusy:
+                continue                        # leave it due; retry on the next tick
+            except Exception as e:              # missing workflow, invalid graph, ...
+                log.warning("schedule %s failed to start: %s", s.id, e)
+                s.last_run_at = now
+                s.run_count += 1
+                s.fail_count += 1
+                s.last_error = str(e)[:2000]
+
+            if is_one_shot(s.cron):
+                s.enabled = False               # "Once" must not recur next year
+                s.next_run_at = None
+            else:
+                # Missed slots (server was down) collapse into this single run.
+                s.next_run_at = compute_next_run(s.cron, tz, now)
+
         await db.commit()
 
 
@@ -45,6 +73,8 @@ async def scheduler_loop(interval: int = 20):
     while True:
         try:
             await _tick()
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            print(f"[scheduler] tick error: {e}")
+            log.exception("tick error: %s", e)
         await asyncio.sleep(interval)

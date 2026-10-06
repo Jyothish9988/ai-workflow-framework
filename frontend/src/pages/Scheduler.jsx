@@ -65,6 +65,64 @@ const browserTz = () =>
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Timezone list (IANA names), grouped by region, with the current UTC offset
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FALLBACK_TIMEZONES = [
+  'Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Asia/Tokyo',
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin',
+  'America/New_York', 'America/Chicago', 'America/Denver',
+  'America/Los_Angeles', 'Australia/Sydney',
+];
+
+const tzOffsetLabel = (tz) => {
+  try {
+    const part = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'shortOffset',
+    })
+      .formatToParts(new Date())
+      .find((p) => p.type === 'timeZoneName');
+
+    return part ? part.value.replace('GMT', 'UTC') : 'UTC';
+  } catch {
+    return '';
+  }
+};
+
+const TIMEZONE_GROUPS = (() => {
+  let names;
+
+  try {
+    names = Intl.supportedValuesOf('timeZone');
+  } catch {
+    names = FALLBACK_TIMEZONES;
+  }
+
+  const groups = {};
+
+  names.forEach((tz) => {
+    const region = tz.includes('/') ? tz.split('/')[0] : 'Other';
+
+    (groups[region] = groups[region] || []).push({
+      value: tz,
+      label: `(${tzOffsetLabel(tz)}) ${tz.replace(/_/g, ' ')}`,
+    });
+  });
+
+  return Object.keys(groups)
+    .sort()
+    .map((region) => [region, groups[region]]);
+})();
+
+const hasTimezone = (tz) =>
+  tz === 'UTC' ||
+  TIMEZONE_GROUPS.some(([, list]) =>
+    list.some((o) => o.value === tz)
+  );
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // New form
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -554,6 +612,7 @@ export default function Scheduler() {
           {
             freq: 'custom',
             cron,
+            timezone: form.timezone,
             enabled: form.enabled,
           }
         );
@@ -1230,16 +1289,46 @@ export default function Scheduler() {
                 Timezone
               </label>
 
-              <input
+              <select
                 className="input"
                 value={form.timezone}
                 onChange={(e) =>
                   set({
-                    timezone:
-                      e.target.value,
+                    timezone: e.target.value,
                   })
                 }
-              />
+              >
+
+                <option value="UTC">
+                  (UTC) UTC
+                </option>
+
+                {/* keep a saved value that isn't in the browser's list */}
+                {!hasTimezone(form.timezone) && (
+                  <option value={form.timezone}>
+                    {form.timezone}
+                  </option>
+                )}
+
+                {TIMEZONE_GROUPS.map(
+                  ([region, zones]) => (
+                    <optgroup
+                      key={region}
+                      label={region}
+                    >
+                      {zones.map((z) => (
+                        <option
+                          key={z.value}
+                          value={z.value}
+                        >
+                          {z.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )
+                )}
+
+              </select>
 
             </div>
 
